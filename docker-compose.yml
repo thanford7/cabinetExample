@@ -1,0 +1,101 @@
+version: "3.8"
+
+services:
+
+  db:
+    container_name: cab-db
+    image: postgres:16
+    networks:
+      - main
+    ports:
+      - "5434:5432"
+    volumes:
+      - db-postgresql-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: cabinet
+      POSTGRES_PASSWORD: superSecure1!
+      POSTGRES_USER: cab
+    restart: always
+
+  adminer:
+    image: adminer
+    restart: always
+    ports:
+      - "8080:8080"
+
+  nginx:
+    container_name: cab-nginx
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    ports:
+      - "443:443"
+    depends_on:
+      - backend
+    volumes:
+      - ./nginx/local.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - main
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: bash -c "python manage.py migrate --noinput && python manage.py collectstatic --noinput && python manage.py runserver"
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+    volumes:
+      - ./backend:/cabinet/code
+    ports:
+      - "8000"
+    networks:
+      - main
+    depends_on:
+      - db
+
+  rabbitmq:
+    container_name: cab-rabbitmq
+    image: rabbitmq:latest
+    networks:
+      - main
+    ports:
+      - "5672:5672"
+    restart: on-failure
+
+  celery:
+    container_name: cab-celery
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: bash -c "celery -A cabinetExample worker -l INFO -Q rx-update"
+    volumes:
+      - ./backend:/cabinet/code
+    networks:
+      - main
+    depends_on:
+      - backend
+      - db
+      - rabbitmq
+
+  celery-beat:
+    container_name: cab-celery-beat
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: bash -c "celery -A cabinetExample beat -l INFO"
+    volumes:
+      - ./backend:/cabinet/code
+    networks:
+      - main
+    depends_on:
+      - backend
+      - db
+      - rabbitmq
+
+volumes:
+  db-postgresql-data:
+
+networks:
+  main:
+    driver: bridge
